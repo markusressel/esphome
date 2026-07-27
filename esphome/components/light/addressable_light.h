@@ -114,8 +114,15 @@ class AddressableLightTransformer : public LightTransformer {
  protected:
   AddressableLight &light_;
   float last_transition_progress_{0.0f};
+  /// Uncorrected target colour (brightness already baked in, correction applied via ESPColorView).
   Color target_color_{};
-  Color uniform_start_color_{};
+  /// Pre-corrected (hardware-domain) target colour: what each LED byte should contain at 100%.
+  /// Stored once so the per-LED interpolation loop can work entirely in hardware domain without
+  /// an uncorrect/correct round-trip on every step.
+  Color corrected_target_color_{};
+  /// Raw stored bytes (post-correction) of the first LED at transition start, cached for the
+  /// uniform fast-path.  Stored as raw bytes so interpolation stays in hardware domain.
+  Color uniform_start_raw_{};
   bool uniform_start_scanned_{false};
   bool uniform_start_is_uniform_{false};
 };
