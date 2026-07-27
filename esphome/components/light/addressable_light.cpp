@@ -61,10 +61,10 @@ void AddressableLightTransformer::start() {
 
   // Pre-compute the corrected (hardware-domain) target: what each LED byte should contain at 100%.
   // Both the uniform fast-path and the per-LED delta path interpolate in hardware-domain bytes so
-  // that colour correction is applied exactly once.  Reading raw bytes from the buffer as the start
+  // that color correction is applied exactly once.  Reading raw bytes from the buffer as the start
   // point and writing raw bytes back avoids the uncorrect/correct round-trip that would otherwise
   // introduce an extra correction on the first frame (double-correction flash) and accumulate
-  // quantisation error on every subsequent frame.
+  // quantization error on every subsequent frame.
   this->corrected_target_color_ = this->light_.correction_.color_correct(this->target_color_);
 
   // Uniformity scan is deferred to the first apply() call. start() can run before the underlying
@@ -108,7 +108,7 @@ optional<LightColorValues> AddressableLightTransformer::apply() {
   // At time = 1.00, 91% complete, 9% remaining, 0% will remain after this step, so the scale is 0% / 9% = 0%.
   //
   // Interpolation is performed in the hardware (post-correction) domain: both start and target are
-  // raw LED buffer bytes.  This ensures colour correction is applied exactly once (in start()) and
+  // raw LED buffer bytes.  This ensures color correction is applied exactly once (in start()) and
   // that no uncorrect/correct round-trip can introduce an additional correction pass on any frame.
 
   if (smoothed_progress > this->last_transition_progress_ && this->last_transition_progress_ < 1.f) {
@@ -157,7 +157,7 @@ optional<LightColorValues> AddressableLightTransformer::apply() {
       uint8_t b = subtract_scaled_difference(this->corrected_target_color_.blue, start.blue, remaining);
       uint8_t w = subtract_scaled_difference(this->corrected_target_color_.white, start.white, remaining);
       for (auto led : this->light_) {
-        // Write pre-corrected bytes directly — colour correction has already been applied.
+        // Write pre-corrected bytes directly — color correction has already been applied.
         led.set_rgbw_raw(r, g, b, w);
       }
     } else {

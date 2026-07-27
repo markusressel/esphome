@@ -47,7 +47,7 @@ async def test_color_correct_no_flash_same_target(
     run_compiled: RunCompiledFunction,
     api_client_connected: APIClientConnectedFactory,
 ) -> None:
-    """Transition to the same colour must not dip any channel (no double-correction flash)."""
+    """Transition to the same color must not dip any channel (no double-correction flash)."""
     async with run_compiled(yaml_config), api_client_connected() as client:
         entities, _ = await client.list_entities_services()
         light = require_entity(entities, "test_strip", LightInfo)
@@ -85,7 +85,7 @@ async def test_color_correct_no_flash_same_target(
             f"stable blue byte {stable_blue} is unexpectedly low before transition"
         )
 
-        # Step 2: start a 1-second transition to the same colour (white).
+        # Step 2: start a 1-second transition to the same color (white).
         samples.clear()
         transition_s = 1.0
         command_time = loop.time()
