@@ -66,6 +66,23 @@ class ESPColorView : public ESPColorSettable {
       return;
     *this->effect_data_ = effect_data;
   }
+  /// Write pre-corrected hardware bytes directly to the LED buffer, bypassing color correction.
+  /// Use only when the values have already been corrected (e.g. during transitions that
+  /// interpolate in the corrected domain to avoid uncorrect/correct round-trip quantization).
+  void set_red_raw(uint8_t red) { *this->red_ = red; }
+  void set_green_raw(uint8_t green) { *this->green_ = green; }
+  void set_blue_raw(uint8_t blue) { *this->blue_ = blue; }
+  void set_white_raw(uint8_t white) {
+    if (this->white_ == nullptr)
+      return;
+    *this->white_ = white;
+  }
+  void set_rgbw_raw(uint8_t red, uint8_t green, uint8_t blue, uint8_t white) {
+    this->set_red_raw(red);
+    this->set_green_raw(green);
+    this->set_blue_raw(blue);
+    this->set_white_raw(white);
+  }
   void fade_to_white(uint8_t amnt) override { this->set(this->get().fade_to_white(amnt)); }
   void fade_to_black(uint8_t amnt) override { this->set(this->get().fade_to_black(amnt)); }
   void lighten(uint8_t delta) override { this->set(this->get().lighten(delta)); }

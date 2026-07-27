@@ -59,6 +59,14 @@ void AddressableLightTransformer::start() {
   this->light_.correction_.set_local_brightness(255);
   this->target_color_ *= to_uint8_scale(end_values.get_brightness() * end_values.get_state());
 
+  // Pre-compute the corrected (hardware-domain) target: what each LED byte should contain at 100%.
+  // Both the uniform fast-path and the per-LED delta path interpolate in hardware-domain bytes so
+  // that color correction is applied exactly once.  Reading raw bytes from the buffer as the start
+  // point and writing raw bytes back avoids the uncorrect/correct round-trip that would otherwise
+  // introduce an extra correction on the first frame (double-correction flash) and accumulate
+  // quantization error on every subsequent frame.
+  this->corrected_target_color_ = this->light_.correction_.color_correct(this->target_color_);
+
   // Uniformity scan is deferred to the first apply() call. start() can run before the underlying
   // LED output's setup() has allocated its frame buffer (e.g. on_boot at priority > HARDWARE
   // triggering a transition), and reading through ESPColorView would deref a null buffer.
@@ -99,29 +107,34 @@ optional<LightColorValues> AddressableLightTransformer::apply() {
   // At time = 0.91, 90% complete, 10% remaining, 9% will remain after this step, so the scale is 9% / 10% = 90%.
   // At time = 1.00, 91% complete, 9% remaining, 0% will remain after this step, so the scale is 0% / 9% = 0%.
   //
-  // Because the color values are quantized to 8 bit resolution after each step, the transition may appear
-  // non-linear when applying small deltas.
+  // Interpolation is performed in the hardware (post-correction) domain: both start and target are
+  // raw LED buffer bytes.  This ensures color correction is applied exactly once (in start()) and
+  // that no uncorrect/correct round-trip can introduce an additional correction pass on any frame.
 
   if (smoothed_progress > this->last_transition_progress_ && this->last_transition_progress_ < 1.f) {
     // Lazy uniformity scan: deferred from start() so the LED output's setup() has run and the
     // frame buffer is valid. When every LED already has the same color (the common case: plain
     // turn_on/turn_off on a uniform strip), interpolate math-only against a single start color.
-    // Avoiding the per-step read-back through the 8-bit stored byte prevents gamma round-trip
-    // quantization from stalling the fade at low values (e.g. gamma 2.8 pre-gamma values <27
-    // round to stored 0, freezing progress).
+    // Reading raw stored bytes (not through uncorrect()) keeps the start in the same hardware domain
+    // as corrected_target_color_, so the very first frame writes the current value unchanged and
+    // subsequent frames advance smoothly to the target without any initial flash or dip.
     if (!this->uniform_start_scanned_) {
       this->uniform_start_scanned_ = true;
       if (this->light_.size() > 0) {
-        Color first = this->light_[0].get();
+        // Read raw hardware bytes (post-correction) for the start of the transition.
+        Color first = Color(this->light_[0].get_red_raw(), this->light_[0].get_green_raw(),
+                            this->light_[0].get_blue_raw(), this->light_[0].get_white_raw());
         bool uniform = true;
         for (int32_t i = 1; i < this->light_.size(); i++) {
-          if (this->light_[i].get() != first) {
+          Color c = Color(this->light_[i].get_red_raw(), this->light_[i].get_green_raw(),
+                          this->light_[i].get_blue_raw(), this->light_[i].get_white_raw());
+          if (c != first) {
             uniform = false;
             break;
           }
         }
         if (uniform) {
-          this->uniform_start_color_ = first;
+          this->uniform_start_raw_ = first;
           this->uniform_start_is_uniform_ = true;
         }
       }
@@ -136,23 +149,26 @@ optional<LightColorValues> AddressableLightTransformer::apply() {
       // via its read-back. Concurrent per-LED mutation during a transition isn't a pattern we
       // support, so this is acceptable.
       // lerp(start, target, progress) via existing helper: target - (target-start)*(1-progress).
-      const Color &start = this->uniform_start_color_;
+      // Both start (uniform_start_raw_) and target (corrected_target_color_) are hardware bytes.
+      const Color &start = this->uniform_start_raw_;
       int32_t remaining = int32_t(256.f * (1.f - smoothed_progress));
-      uint8_t r = subtract_scaled_difference(this->target_color_.red, start.red, remaining);
-      uint8_t g = subtract_scaled_difference(this->target_color_.green, start.green, remaining);
-      uint8_t b = subtract_scaled_difference(this->target_color_.blue, start.blue, remaining);
-      uint8_t w = subtract_scaled_difference(this->target_color_.white, start.white, remaining);
+      uint8_t r = subtract_scaled_difference(this->corrected_target_color_.red, start.red, remaining);
+      uint8_t g = subtract_scaled_difference(this->corrected_target_color_.green, start.green, remaining);
+      uint8_t b = subtract_scaled_difference(this->corrected_target_color_.blue, start.blue, remaining);
+      uint8_t w = subtract_scaled_difference(this->corrected_target_color_.white, start.white, remaining);
       for (auto led : this->light_) {
-        led.set_rgbw(r, g, b, w);
+        // Write pre-corrected bytes directly — color correction has already been applied.
+        led.set_rgbw_raw(r, g, b, w);
       }
     } else {
       int32_t scale =
           int32_t(256.f * std::max((1.f - smoothed_progress) / (1.f - this->last_transition_progress_), 0.f));
       for (auto led : this->light_) {
-        led.set_rgbw(subtract_scaled_difference(this->target_color_.red, led.get_red(), scale),
-                     subtract_scaled_difference(this->target_color_.green, led.get_green(), scale),
-                     subtract_scaled_difference(this->target_color_.blue, led.get_blue(), scale),
-                     subtract_scaled_difference(this->target_color_.white, led.get_white(), scale));
+        // Read raw hardware bytes and write pre-corrected bytes back — no uncorrect/correct round-trip.
+        led.set_rgbw_raw(subtract_scaled_difference(this->corrected_target_color_.red, led.get_red_raw(), scale),
+                         subtract_scaled_difference(this->corrected_target_color_.green, led.get_green_raw(), scale),
+                         subtract_scaled_difference(this->corrected_target_color_.blue, led.get_blue_raw(), scale),
+                         subtract_scaled_difference(this->corrected_target_color_.white, led.get_white_raw(), scale));
       }
     }
     this->last_transition_progress_ = smoothed_progress;
