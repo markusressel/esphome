@@ -111,7 +111,7 @@ class AddressableLightWrapper : public light::AddressableLight {
  protected:
   light::ESPColorView get_view_internal(int32_t index) const override {
     return {&this->wrapper_state_[0], &this->wrapper_state_[1], &this->wrapper_state_[2],
-            &this->wrapper_state_[3], &this->wrapper_state_[4], &this->correction_};
+            &this->wrapper_state_[3], &this->wrapper_state_[4], &this->correction_, index, this->dither_};
   }
 
   light::LightState *light_state_;

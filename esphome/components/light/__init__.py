@@ -15,6 +15,7 @@ from esphome.const import (
     CONF_COLOR_MODE,
     CONF_COLOR_TEMPERATURE,
     CONF_DEFAULT_TRANSITION_LENGTH,
+    CONF_DITHER,
     CONF_EFFECTS,
     CONF_ENTITY_CATEGORY,
     CONF_FLASH_TRANSITION_LENGTH,
@@ -302,6 +303,7 @@ ADDRESSABLE_LIGHT_SCHEMA = RGB_LIGHT_SCHEMA.extend(
             [cv.percentage], cv.Length(min=3, max=4)
         ),
         cv.Optional(CONF_POWER_SUPPLY): cv.use_id(power_supply.PowerSupply),
+        cv.Optional(CONF_DITHER): cv.boolean,
     }
 )
 
@@ -427,6 +429,9 @@ async def setup_light_core_(light_var, config, output_var):
     if (power_supply_id := config.get(CONF_POWER_SUPPLY)) is not None:
         var_ = await cg.get_variable(power_supply_id)
         cg.add(output_var.set_power_supply(var_))
+
+    if CONF_DITHER in config:
+        cg.add(output_var.set_dither(config[CONF_DITHER]))
 
     if (mqtt_id := config.get(CONF_MQTT_ID)) is not None:
         mqtt_ = cg.new_Pvariable(mqtt_id, light_var)

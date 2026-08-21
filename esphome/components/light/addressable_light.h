@@ -60,12 +60,15 @@ class AddressableLight : public LightOutput, public Component {
   // Indicates whether an effect that directly updates the output buffer is active to prevent overwriting
   bool is_effect_active() const { return this->effect_active_; }
   void set_effect_active(bool effect_active) { this->effect_active_ = effect_active; }
+  void set_dither(bool dither) { this->dither_ = dither; }
+  void set_dithered_color(int32_t index, float r, float g, float b, float w = 0.0f);
   std::unique_ptr<LightTransformer> create_default_transition() override;
   void set_correction(float red, float green, float blue, float white = 1.0f) {
     this->correction_.set_max_brightness(
         Color(to_uint8_scale(red), to_uint8_scale(green), to_uint8_scale(blue), to_uint8_scale(white)));
   }
   void setup_state(LightState *state) override {
+    this->correction_.calculate_gamma_table16(state->get_gamma_correct());
 #ifdef USE_LIGHT_GAMMA_LUT
     this->correction_.set_gamma_table(state->get_gamma_table());
 #endif
@@ -102,7 +105,10 @@ class AddressableLight : public LightOutput, public Component {
   power_supply::PowerSupplyRequester power_;
 #endif
   bool effect_active_{false};
+  bool dither_{false};
 };
+
+extern const uint8_t BAYER64[64];
 
 class AddressableLightTransformer : public LightTransformer {
  public:

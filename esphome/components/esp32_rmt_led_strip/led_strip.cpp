@@ -262,7 +262,7 @@ light::ESPColorView ESP32RMTLEDStripLightOutput::get_view_internal(int32_t index
           this->buf_ + (index * multiplier) + b + this->is_wrgb_,
           this->is_rgbw_ || this->is_wrgb_ ? this->buf_ + (index * multiplier) + white : nullptr,
           &this->effect_data_[index],
-          &this->correction_};
+          &this->correction_, index, this->dither_};
 }
 
 void ESP32RMTLEDStripLightOutput::dump_config() {

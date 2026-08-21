@@ -2,6 +2,7 @@
 
 #include "esphome/core/color.h"
 #include "esphome/core/hal.h"
+#include <cmath>
 
 namespace esphome::light {
 
@@ -23,8 +24,22 @@ inline uint8_t gamma_table_reverse_search(const uint16_t *table, uint16_t target
 class ESPColorCorrection {
  public:
   void set_max_brightness(const Color &max_brightness) { this->max_brightness_ = max_brightness; }
+  const Color &get_max_brightness() const { return this->max_brightness_; }
   void set_local_brightness(uint8_t local_brightness) { this->local_brightness_ = local_brightness; }
   void set_gamma_table(const uint16_t *table) { this->gamma_table_ = table; }
+  
+  void calculate_gamma_table16(float gamma) {
+    if (gamma == 0.0f) {
+      for (int i = 0; i < 256; i++) {
+        this->gamma_table16_[i] = (uint16_t)((i << 8) | i);
+      }
+    } else {
+      for (int i = 0; i < 256; i++) {
+        float v = (float)i / 255.0f;
+        this->gamma_table16_[i] = (uint16_t)(powf(v, gamma) * 65535.0f + 0.5f);
+      }
+    }
+  }
   inline Color color_correct(Color color) const ESPHOME_ALWAYS_INLINE {
     // corrected = (uncorrected * max_brightness * local_brightness) ^ gamma
     return Color(this->color_correct_red(color.red), this->color_correct_green(color.green),
@@ -45,6 +60,23 @@ class ESPColorCorrection {
   inline uint8_t color_correct_white(uint8_t white) const ESPHOME_ALWAYS_INLINE {
     uint8_t res = esp_scale8_twice(white, this->max_brightness_.white, this->local_brightness_);
     return this->gamma_correct_(res);
+  }
+
+  inline uint16_t color_correct_red_16(uint8_t red) const ESPHOME_ALWAYS_INLINE {
+    uint8_t res = esp_scale8_twice(red, this->max_brightness_.red, this->local_brightness_);
+    return this->gamma_table16_[res];
+  }
+  inline uint16_t color_correct_green_16(uint8_t green) const ESPHOME_ALWAYS_INLINE {
+    uint8_t res = esp_scale8_twice(green, this->max_brightness_.green, this->local_brightness_);
+    return this->gamma_table16_[res];
+  }
+  inline uint16_t color_correct_blue_16(uint8_t blue) const ESPHOME_ALWAYS_INLINE {
+    uint8_t res = esp_scale8_twice(blue, this->max_brightness_.blue, this->local_brightness_);
+    return this->gamma_table16_[res];
+  }
+  inline uint16_t color_correct_white_16(uint8_t white) const ESPHOME_ALWAYS_INLINE {
+    uint8_t res = esp_scale8_twice(white, this->max_brightness_.white, this->local_brightness_);
+    return this->gamma_table16_[res];
   }
   Color color_uncorrect(Color color) const;
   inline uint8_t color_uncorrect_red(uint8_t red) const ESPHOME_ALWAYS_INLINE {
@@ -70,6 +102,7 @@ class ESPColorCorrection {
   uint8_t color_uncorrect_channel_(uint8_t value, uint8_t max_brightness) const;
 
   const uint16_t *gamma_table_{nullptr};
+  uint16_t gamma_table16_[256];
   Color max_brightness_{255, 255, 255, 255};
   uint8_t local_brightness_{255};
 };

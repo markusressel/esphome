@@ -62,6 +62,6 @@ void SpiLedStrip::write_state(light::LightState *state) {
 light::ESPColorView SpiLedStrip::get_view_internal(int32_t index) const {
   size_t pos = index * 4 + 5;
   return {this->buf_ + pos + 2,       this->buf_ + pos + 1, this->buf_ + pos + 0, nullptr,
-          this->effect_data_ + index, &this->correction_};
+          this->effect_data_ + index, &this->correction_, index, this->dither_};
 }
 }  // namespace esphome::spi_led_strip

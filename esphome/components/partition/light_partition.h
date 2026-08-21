@@ -85,7 +85,7 @@ class PartitionLightOutput final : public light::AddressableLight {
     }
 
     auto view = (*seg.get_src())[src_off];
-    view.raw_set_color_correction(&this->correction_);
+    view.raw_set_color_correction(&this->correction_, index, this->dither_);
     return view;
   }
 

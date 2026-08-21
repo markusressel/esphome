@@ -5,6 +5,13 @@ namespace esphome::light {
 
 static const char *const TAG = "light.addressable";
 
+const uint8_t BAYER64[64] = {
+    0, 32, 16, 48,  8, 40, 24, 56,  4, 36, 20, 52, 12, 44, 28, 60,
+    2, 34, 18, 50, 10, 42, 26, 58,  6, 38, 22, 54, 14, 46, 30, 62,
+    1, 33, 17, 49,  9, 41, 25, 57,  5, 37, 21, 53, 13, 45, 29, 61,
+    3, 35, 19, 51, 11, 43, 27, 59,  7, 39, 23, 55, 15, 47, 31, 63
+};
+
 void AddressableLight::call_setup() {
   this->setup();
 
@@ -42,8 +49,47 @@ void AddressableLight::update_state(LightState *state) {
   if (this->is_effect_active())
     return;
 
-  // don't use LightState helper, gamma correction+brightness is handled by ESPColorView
-  this->all() = color_from_light_color_values(val);
+  if (this->dither_) {
+    float brightness = val.get_brightness() * val.get_state();
+    float r = val.get_red() * brightness;
+    float g = val.get_green() * brightness;
+    float b = val.get_blue() * brightness;
+    float w = val.get_white() * brightness;
+
+    float gamma = state->get_gamma_correct();
+    float max_r = (float)this->correction_.get_max_brightness().red / 255.0f;
+    float max_g = (float)this->correction_.get_max_brightness().green / 255.0f;
+    float max_b = (float)this->correction_.get_max_brightness().blue / 255.0f;
+    float max_w = (float)this->correction_.get_max_brightness().white / 255.0f;
+
+    float lin_r = r * max_r;
+    float lin_g = g * max_g;
+    float lin_b = b * max_b;
+    float lin_w = w * max_w;
+
+    float c_r = (gamma == 0.0f ? lin_r : powf(lin_r, gamma)) * 255.0f;
+    float c_g = (gamma == 0.0f ? lin_g : powf(lin_g, gamma)) * 255.0f;
+    float c_b = (gamma == 0.0f ? lin_b : powf(lin_b, gamma)) * 255.0f;
+    float c_w = (gamma == 0.0f ? lin_w : powf(lin_w, gamma)) * 255.0f;
+
+    uint8_t r_int = (uint8_t)c_r; float r_frac = c_r - r_int;
+    uint8_t g_int = (uint8_t)c_g; float g_frac = c_g - g_int;
+    uint8_t b_int = (uint8_t)c_b; float b_frac = c_b - b_int;
+    uint8_t w_int = (uint8_t)c_w; float w_frac = c_w - w_int;
+
+    for (int i = 0; i < this->size(); i++) {
+        float threshold = (BAYER64[i % 64] + 0.5f) / 64.0f;
+        this->get(i).set_rgbw_raw(
+            r_int + (r_frac > threshold ? 1 : 0),
+            g_int + (g_frac > threshold ? 1 : 0),
+            b_int + (b_frac > threshold ? 1 : 0),
+            w_int + (w_frac > threshold ? 1 : 0)
+        );
+    }
+  } else {
+    // don't use LightState helper, gamma correction+brightness is handled by ESPColorView
+    this->all() = color_from_light_color_values(val);
+  }
   this->schedule_show();
 }
 
@@ -112,7 +158,49 @@ optional<LightColorValues> AddressableLightTransformer::apply() {
   // that no uncorrect/correct round-trip can introduce an additional correction pass on any frame.
 
   if (smoothed_progress > this->last_transition_progress_ && this->last_transition_progress_ < 1.f) {
-    // Lazy uniformity scan: deferred from start() so the LED output's setup() has run and the
+    if (this->light_.dither_) {
+      auto start_vals = this->get_start_values();
+      auto target_vals = this->get_target_values();
+      auto current_vals = LightColorValues::lerp(start_vals, target_vals, smoothed_progress);
+
+      float brightness = current_vals.get_brightness() * current_vals.get_state();
+      float r = current_vals.get_red() * brightness;
+      float g = current_vals.get_green() * brightness;
+      float b = current_vals.get_blue() * brightness;
+      float w = current_vals.get_white() * brightness;
+
+      float gamma = this->light_.state_parent_->get_gamma_correct();
+      float max_r = (float)this->light_.correction_.get_max_brightness().red / 255.0f;
+      float max_g = (float)this->light_.correction_.get_max_brightness().green / 255.0f;
+      float max_b = (float)this->light_.correction_.get_max_brightness().blue / 255.0f;
+      float max_w = (float)this->light_.correction_.get_max_brightness().white / 255.0f;
+
+      float lin_r = r * max_r;
+      float lin_g = g * max_g;
+      float lin_b = b * max_b;
+      float lin_w = w * max_w;
+
+      float c_r = (gamma == 0.0f ? lin_r : powf(lin_r, gamma)) * 255.0f;
+      float c_g = (gamma == 0.0f ? lin_g : powf(lin_g, gamma)) * 255.0f;
+      float c_b = (gamma == 0.0f ? lin_b : powf(lin_b, gamma)) * 255.0f;
+      float c_w = (gamma == 0.0f ? lin_w : powf(lin_w, gamma)) * 255.0f;
+
+      uint8_t r_int = (uint8_t)c_r; float r_frac = c_r - r_int;
+      uint8_t g_int = (uint8_t)c_g; float g_frac = c_g - g_int;
+      uint8_t b_int = (uint8_t)c_b; float b_frac = c_b - b_int;
+      uint8_t w_int = (uint8_t)c_w; float w_frac = c_w - w_int;
+
+      for (int i = 0; i < this->light_.size(); i++) {
+          float threshold = (BAYER64[i % 64] + 0.5f) / 64.0f;
+          this->light_.get(i).set_rgbw_raw(
+              r_int + (r_frac > threshold ? 1 : 0),
+              g_int + (g_frac > threshold ? 1 : 0),
+              b_int + (b_frac > threshold ? 1 : 0),
+              w_int + (w_frac > threshold ? 1 : 0)
+          );
+      }
+    } else {
+      // Lazy uniformity scan: deferred from start() so the LED output's setup() has run and the
     // frame buffer is valid. When every LED already has the same color (the common case: plain
     // turn_on/turn_off on a uniform strip), interpolate math-only against a single start color.
     // Reading raw stored bytes (not through uncorrect()) keeps the start in the same hardware domain
@@ -171,11 +259,53 @@ optional<LightColorValues> AddressableLightTransformer::apply() {
                          subtract_scaled_difference(this->corrected_target_color_.white, led.get_white_raw(), scale));
       }
     }
+    }
     this->last_transition_progress_ = smoothed_progress;
     this->light_.schedule_show();
   }
 
   return {};
+}
+
+void AddressableLight::set_dithered_color(int32_t index, float r, float g, float b, float w) {
+  if (!this->dither_) {
+    this->get(index) = Color(
+        (uint8_t)(r * 255.0f), 
+        (uint8_t)(g * 255.0f), 
+        (uint8_t)(b * 255.0f), 
+        (uint8_t)(w * 255.0f)
+    );
+    return;
+  }
+  float gamma = this->state_parent_->get_gamma_correct();
+  float max_r = (float)this->correction_.get_max_brightness().red / 255.0f;
+  float max_g = (float)this->correction_.get_max_brightness().green / 255.0f;
+  float max_b = (float)this->correction_.get_max_brightness().blue / 255.0f;
+  float max_w = (float)this->correction_.get_max_brightness().white / 255.0f;
+  float local_b = this->state_parent_->current_values.get_brightness() * this->state_parent_->current_values.get_state();
+
+  float lin_r = r * max_r * local_b;
+  float lin_g = g * max_g * local_b;
+  float lin_b = b * max_b * local_b;
+  float lin_w = w * max_w * local_b;
+
+  float c_r = (gamma == 0.0f ? lin_r : powf(lin_r, gamma)) * 255.0f;
+  float c_g = (gamma == 0.0f ? lin_g : powf(lin_g, gamma)) * 255.0f;
+  float c_b = (gamma == 0.0f ? lin_b : powf(lin_b, gamma)) * 255.0f;
+  float c_w = (gamma == 0.0f ? lin_w : powf(lin_w, gamma)) * 255.0f;
+
+  uint8_t r_int = (uint8_t)c_r; float r_frac = c_r - r_int;
+  uint8_t g_int = (uint8_t)c_g; float g_frac = c_g - g_int;
+  uint8_t b_int = (uint8_t)c_b; float b_frac = c_b - b_int;
+  uint8_t w_int = (uint8_t)c_w; float w_frac = c_w - w_int;
+
+  float threshold = (BAYER64[index % 64] + 0.5f) / 64.0f;
+  this->get(index).set_rgbw_raw(
+      r_int + (r_frac > threshold ? 1 : 0),
+      g_int + (g_frac > threshold ? 1 : 0),
+      b_int + (b_frac > threshold ? 1 : 0),
+      w_int + (w_frac > threshold ? 1 : 0)
+  );
 }
 
 }  // namespace esphome::light

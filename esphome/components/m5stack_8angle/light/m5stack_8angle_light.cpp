@@ -37,7 +37,7 @@ light::ESPColorView M5Stack8AngleLightOutput::get_view_internal(int32_t index) c
   size_t pos = index * M5STACK_8ANGLE_BYTES_PER_LED;
   // red, green, blue, white, effect_data, color_correction
   return {this->buf_ + pos, this->buf_ + pos + 1,       this->buf_ + pos + 2,
-          nullptr,          this->effect_data_ + index, &this->correction_};
+          nullptr,          this->effect_data_ + index, &this->correction_, index, this->dither_};
 }
 
 }  // namespace esphome::m5stack_8angle

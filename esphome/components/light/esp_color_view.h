@@ -6,6 +6,8 @@
 
 namespace esphome::light {
 
+extern const uint8_t BAYER64[64];
+
 class ESPColorSettable {
  public:
   virtual void set(const Color &color) = 0;
@@ -37,13 +39,15 @@ class ESPColorSettable {
 class ESPColorView : public ESPColorSettable {
  public:
   ESPColorView(uint8_t *red, uint8_t *green, uint8_t *blue, uint8_t *white, uint8_t *effect_data,
-               const ESPColorCorrection *color_correction)
+               const ESPColorCorrection *color_correction, int32_t index = 0, bool dither = false)
       : red_(red),
         green_(green),
         blue_(blue),
         white_(white),
         effect_data_(effect_data),
-        color_correction_(color_correction) {}
+        color_correction_(color_correction),
+        index_(index),
+        dither_(dither) {}
   ESPColorView &operator=(const Color &rhs) {
     this->set(rhs);
     return *this;
@@ -53,13 +57,23 @@ class ESPColorView : public ESPColorSettable {
     return *this;
   }
   void set(const Color &color) override { this->set_rgbw(color.r, color.g, color.b, color.w); }
-  void set_red(uint8_t red) override { *this->red_ = this->color_correction_->color_correct_red(red); }
-  void set_green(uint8_t green) override { *this->green_ = this->color_correction_->color_correct_green(green); }
-  void set_blue(uint8_t blue) override { *this->blue_ = this->color_correction_->color_correct_blue(blue); }
+  void set_red(uint8_t red) override { 
+      uint16_t c = this->color_correction_->color_correct_red_16(red);
+      *this->red_ = this->dither_ ? this->dither_16_to_8(c) : (c >> 8);
+  }
+  void set_green(uint8_t green) override { 
+      uint16_t c = this->color_correction_->color_correct_green_16(green);
+      *this->green_ = this->dither_ ? this->dither_16_to_8(c) : (c >> 8);
+  }
+  void set_blue(uint8_t blue) override { 
+      uint16_t c = this->color_correction_->color_correct_blue_16(blue);
+      *this->blue_ = this->dither_ ? this->dither_16_to_8(c) : (c >> 8);
+  }
   void set_white(uint8_t white) override {
     if (this->white_ == nullptr)
       return;
-    *this->white_ = this->color_correction_->color_correct_white(white);
+    uint16_t c = this->color_correction_->color_correct_white_16(white);
+    *this->white_ = this->dither_ ? this->dither_16_to_8(c) : (c >> 8);
   }
   void set_effect_data(uint8_t effect_data) override {
     if (this->effect_data_ == nullptr)
@@ -114,12 +128,21 @@ class ESPColorView : public ESPColorSettable {
   }
 
  protected:
-  uint8_t *const red_;
-  uint8_t *const green_;
-  uint8_t *const blue_;
-  uint8_t *const white_;
-  uint8_t *const effect_data_;
+  inline uint8_t dither_16_to_8(uint16_t val) const {
+    uint8_t val_int = val >> 8;
+    uint8_t val_frac = val & 0xFF;
+    uint8_t threshold = BAYER64[this->index_ % 64] * 4;
+    return val_int + (val_frac > threshold ? 1 : 0);
+  }
+
+  uint8_t *red_;
+  uint8_t *green_;
+  uint8_t *blue_;
+  uint8_t *white_;
+  uint8_t *effect_data_;
   const ESPColorCorrection *color_correction_;
+  int32_t index_;
+  bool dither_;
 };
 
 }  // namespace esphome::light

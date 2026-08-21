@@ -181,7 +181,7 @@ light::ESPColorView RP2040PIOLEDStripLightOutput::get_view_internal(int32_t inde
           this->buf_ + (index * multiplier) + b,
           this->is_rgbw_ ? this->buf_ + (index * multiplier) + 3 : nullptr,
           &this->effect_data_[index],
-          &this->correction_};
+          &this->correction_, index, this->dither_};
 }
 
 void RP2040PIOLEDStripLightOutput::dump_config() {
