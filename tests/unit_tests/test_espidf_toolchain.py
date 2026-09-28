@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
+from esphome.components.esp32.const import KEY_ESP32, KEY_VARIANT
 from esphome.const import (
     CONF_COMPILE_PROCESS_LIMIT,
     CONF_ESPHOME,
@@ -55,7 +56,7 @@ def test_get_esphome_esp_idf_paths_forwards_source_override():
         toolchain, "check_esp_idf_install", return_value=("/fw", "/penv")
     ) as mock_install:
         toolchain._get_esphome_esp_idf_paths("5.5.4")
-    mock_install.assert_called_once_with("5.5.4", source_url=url)
+    mock_install.assert_called_once_with("5.5.4", targets=None, source_url=url)
 
 
 def test_get_esphome_esp_idf_paths_no_override():
@@ -66,7 +67,28 @@ def test_get_esphome_esp_idf_paths_no_override():
         toolchain, "check_esp_idf_install", return_value=("/fw", "/penv")
     ) as mock_install:
         toolchain._get_esphome_esp_idf_paths("5.5.4")
-    mock_install.assert_called_once_with("5.5.4", source_url=None)
+    mock_install.assert_called_once_with("5.5.4", targets=None, source_url=None)
+
+
+def test_get_configured_targets_from_variant(monkeypatch: pytest.MonkeyPatch):
+    """The configured variant restricts the toolchain install to its target."""
+    monkeypatch.delenv("CI", raising=False)
+    CORE.data[KEY_ESP32] = {KEY_VARIANT: "ESP32S3"}
+    assert toolchain._get_configured_targets() == ["esp32s3"]
+
+
+def test_get_configured_targets_without_variant(monkeypatch: pytest.MonkeyPatch):
+    """No stored variant (e.g. tooling outside a build) keeps the default."""
+    monkeypatch.delenv("CI", raising=False)
+    CORE.data.pop(KEY_ESP32, None)
+    assert toolchain._get_configured_targets() is None
+
+
+def test_get_configured_targets_ci_installs_all(monkeypatch: pytest.MonkeyPatch):
+    """CI installs every target so the shared cache covers all variants."""
+    monkeypatch.setenv("CI", "true")
+    CORE.data[KEY_ESP32] = {KEY_VARIANT: "ESP32S3"}
+    assert toolchain._get_configured_targets() is None
 
 
 def _setup_build(setup_core: Path) -> tuple[Path, Path]:
@@ -243,6 +265,21 @@ def test_get_idf_env_sets_git_ceiling_directories(setup_core: Path) -> None:
     assert str(CORE.config_dir) in env["GIT_CEILING_DIRECTORIES"].split(os.pathsep)
 
 
+def test_get_idf_env_pops_inherited_pythonpath(setup_core: Path) -> None:
+    """A PYTHONPATH from the parent environment must not reach idf.py.
+
+    It would override the IDF venv's isolation, shadowing its pinned
+    packages and failing idf.py's dependency check.
+    """
+    toolchain._cache().env.clear()
+    with patch.dict(
+        os.environ,
+        {"IDF_PATH": str(setup_core), "PYTHONPATH": "/outside/site-packages"},
+    ):
+        env = toolchain._get_idf_env(version="5.5.4")
+    assert "PYTHONPATH" not in env
+
+
 def test_get_cmake_output_without_build_dir(setup_core: Path) -> None:
     """A build dir that was never created raises EsphomeError.
 
@@ -334,6 +371,97 @@ def test_run_idf_py_jobs_sets_build_jobs_env(setup_core: Path) -> None:
         toolchain.run_idf_py("build")
         env = mock_run.call_args.kwargs["env"]
         assert "IDF_PY_BUILD_JOBS" not in env
+
+
+def test_run_compile_restamps_cmakecache_after_discovery(setup_core: Path) -> None:
+    """After a successful discovery reconfigure the reference CMakeCache.txt
+    is restamped; cmake does not rewrite it when only properties or plain
+    variables change, so the staleness flag would otherwise never clear."""
+    _setup_build(setup_core)
+    config = {CONF_ESPHOME: {}}
+    cmakecache = CORE.relative_build_path("build/CMakeCache.txt")
+    build_ninja = CORE.relative_build_path("build/build.ninja")
+    cmakecache.parent.mkdir(parents=True, exist_ok=True)
+    cmakecache.write_text("")
+    build_ninja.write_text("")
+    old = cmakecache.stat().st_mtime - 100
+    os.utime(cmakecache, (old, old))
+    os.utime(build_ninja, (old, old))
+
+    with (
+        patch.object(toolchain, "need_reconfigure", return_value=True),
+        patch("esphome.build_gen.espidf.write_project"),
+        patch.object(toolchain, "run_reconfigure", return_value=0),
+        patch.object(toolchain, "run_idf_py", return_value=0),
+        patch.object(toolchain, "print_summary"),
+    ):
+        assert toolchain.run_compile(config, verbose=False) == 0
+
+    assert cmakecache.stat().st_mtime > old
+    # build.ninja must not be older than the cache or ninja re-runs cmake
+    assert build_ninja.stat().st_mtime >= cmakecache.stat().st_mtime
+
+
+def test_run_compile_discovery_without_cmakecache(setup_core: Path) -> None:
+    """A discovery pass that produced no CMakeCache.txt (nothing to restamp)
+    still completes normally."""
+    _setup_build(setup_core)
+    config = {CONF_ESPHOME: {}}
+
+    with (
+        patch.object(toolchain, "need_reconfigure", return_value=True),
+        patch("esphome.build_gen.espidf.write_project"),
+        patch.object(toolchain, "run_reconfigure", return_value=0),
+        patch.object(toolchain, "run_idf_py", return_value=0),
+        patch.object(toolchain, "print_summary"),
+    ):
+        assert toolchain.run_compile(config, verbose=False) == 0
+
+    assert not CORE.relative_build_path("build/CMakeCache.txt").exists()
+
+
+def test_run_compile_reconfigures_after_full_write_outside_testing_mode(
+    setup_core: Path,
+) -> None:
+    """The full CMakeLists write is followed by a reconfigure (#18682); a
+    failure there stops the build and leaves the cache unstamped."""
+    _setup_build(setup_core)
+    config = {CONF_ESPHOME: {}}
+    cmakecache = CORE.relative_build_path("build/CMakeCache.txt")
+    cmakecache.parent.mkdir(parents=True, exist_ok=True)
+    cmakecache.write_text("")
+    old = cmakecache.stat().st_mtime - 100
+    os.utime(cmakecache, (old, old))
+    calls: list[tuple] = []
+    reconfigures = 0
+
+    def record_write(minimal: bool = False) -> None:
+        calls.append(("write_project", minimal))
+
+    def record_reconfigure() -> int:
+        nonlocal reconfigures
+        reconfigures += 1
+        calls.append(("run_reconfigure",))
+        return 1 if reconfigures == 2 else 0
+
+    with (
+        patch.object(toolchain, "need_reconfigure", return_value=True),
+        patch("esphome.build_gen.espidf.write_project", side_effect=record_write),
+        patch.object(toolchain, "run_reconfigure", side_effect=record_reconfigure),
+        patch.object(toolchain, "run_idf_py", return_value=0) as mock_build,
+        patch.object(toolchain, "print_summary"),
+    ):
+        assert not CORE.testing_mode
+        assert toolchain.run_compile(config, verbose=False) == 1
+
+    assert calls == [
+        ("write_project", True),
+        ("run_reconfigure",),
+        ("write_project", False),
+        ("run_reconfigure",),
+    ]
+    mock_build.assert_not_called()
+    assert cmakecache.stat().st_mtime == old
 
 
 def test_run_compile_passes_compile_process_limit(setup_core: Path) -> None:
