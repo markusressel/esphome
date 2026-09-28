@@ -45,6 +45,7 @@ void AddressableLight::update_state(LightState *state) {
   auto val = state->current_values;
   auto max_brightness = to_uint8_scale(val.get_brightness() * val.get_state());
   this->correction_.set_local_brightness(max_brightness);
+  this->correction_.calculate_color_scales(state->get_gamma_correct(), val.get_brightness() * val.get_state());
 
   if (this->is_effect_active())
     return;
@@ -103,6 +104,7 @@ void AddressableLightTransformer::start() {
 
   // our transition will handle brightness, disable brightness in correction.
   this->light_.correction_.set_local_brightness(255);
+  this->light_.correction_.calculate_color_scales(this->light_.state_parent_->get_gamma_correct(), 1.0f);
   this->target_color_ *= to_uint8_scale(end_values.get_brightness() * end_values.get_state());
 
   // Pre-compute the corrected (hardware-domain) target: what each LED byte should contain at 100%.

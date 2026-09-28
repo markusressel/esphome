@@ -40,43 +40,57 @@ class ESPColorCorrection {
       }
     }
   }
+
+  void calculate_color_scales(float gamma, float master_brightness) {
+      float max_r = (float)this->max_brightness_.red / 255.0f;
+      float max_g = (float)this->max_brightness_.green / 255.0f;
+      float max_b = (float)this->max_brightness_.blue / 255.0f;
+      float max_w = (float)this->max_brightness_.white / 255.0f;
+      
+      float lr = max_r * master_brightness;
+      float lg = max_g * master_brightness;
+      float lb = max_b * master_brightness;
+      float lw = max_w * master_brightness;
+      
+      float cr = gamma == 0.0f ? lr : powf(lr, gamma);
+      float cg = gamma == 0.0f ? lg : powf(lg, gamma);
+      float cb = gamma == 0.0f ? lb : powf(lb, gamma);
+      float cw = gamma == 0.0f ? lw : powf(lw, gamma);
+      
+      this->scale_r_ = (uint32_t)(cr * 65536.0f);
+      this->scale_g_ = (uint32_t)(cg * 65536.0f);
+      this->scale_b_ = (uint32_t)(cb * 65536.0f);
+      this->scale_w_ = (uint32_t)(cw * 65536.0f);
+  }
   inline Color color_correct(Color color) const ESPHOME_ALWAYS_INLINE {
     // corrected = (uncorrected * max_brightness * local_brightness) ^ gamma
     return Color(this->color_correct_red(color.red), this->color_correct_green(color.green),
                  this->color_correct_blue(color.blue), this->color_correct_white(color.white));
   }
   inline uint8_t color_correct_red(uint8_t red) const ESPHOME_ALWAYS_INLINE {
-    uint8_t res = esp_scale8_twice(red, this->max_brightness_.red, this->local_brightness_);
-    return this->gamma_correct_(res);
+    return this->color_correct_red_16(red) >> 8;
   }
   inline uint8_t color_correct_green(uint8_t green) const ESPHOME_ALWAYS_INLINE {
-    uint8_t res = esp_scale8_twice(green, this->max_brightness_.green, this->local_brightness_);
-    return this->gamma_correct_(res);
+    return this->color_correct_green_16(green) >> 8;
   }
   inline uint8_t color_correct_blue(uint8_t blue) const ESPHOME_ALWAYS_INLINE {
-    uint8_t res = esp_scale8_twice(blue, this->max_brightness_.blue, this->local_brightness_);
-    return this->gamma_correct_(res);
+    return this->color_correct_blue_16(blue) >> 8;
   }
   inline uint8_t color_correct_white(uint8_t white) const ESPHOME_ALWAYS_INLINE {
-    uint8_t res = esp_scale8_twice(white, this->max_brightness_.white, this->local_brightness_);
-    return this->gamma_correct_(res);
+    return this->color_correct_white_16(white) >> 8;
   }
 
   inline uint16_t color_correct_red_16(uint8_t red) const ESPHOME_ALWAYS_INLINE {
-    uint8_t res = esp_scale8_twice(red, this->max_brightness_.red, this->local_brightness_);
-    return this->gamma_table16_[res];
+    return ((uint32_t)this->gamma_table16_[red] * this->scale_r_) >> 16;
   }
   inline uint16_t color_correct_green_16(uint8_t green) const ESPHOME_ALWAYS_INLINE {
-    uint8_t res = esp_scale8_twice(green, this->max_brightness_.green, this->local_brightness_);
-    return this->gamma_table16_[res];
+    return ((uint32_t)this->gamma_table16_[green] * this->scale_g_) >> 16;
   }
   inline uint16_t color_correct_blue_16(uint8_t blue) const ESPHOME_ALWAYS_INLINE {
-    uint8_t res = esp_scale8_twice(blue, this->max_brightness_.blue, this->local_brightness_);
-    return this->gamma_table16_[res];
+    return ((uint32_t)this->gamma_table16_[blue] * this->scale_b_) >> 16;
   }
   inline uint16_t color_correct_white_16(uint8_t white) const ESPHOME_ALWAYS_INLINE {
-    uint8_t res = esp_scale8_twice(white, this->max_brightness_.white, this->local_brightness_);
-    return this->gamma_table16_[res];
+    return ((uint32_t)this->gamma_table16_[white] * this->scale_w_) >> 16;
   }
   Color color_uncorrect(Color color) const;
   inline uint8_t color_uncorrect_red(uint8_t red) const ESPHOME_ALWAYS_INLINE {
@@ -103,6 +117,10 @@ class ESPColorCorrection {
 
   const uint16_t *gamma_table_{nullptr};
   uint16_t gamma_table16_[256];
+  uint32_t scale_r_{65536};
+  uint32_t scale_g_{65536};
+  uint32_t scale_b_{65536};
+  uint32_t scale_w_{65536};
   Color max_brightness_{255, 255, 255, 255};
   uint8_t local_brightness_{255};
 };

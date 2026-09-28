@@ -130,6 +130,7 @@ class ESPColorView : public ESPColorSettable {
  protected:
   inline uint8_t dither_16_to_8(uint16_t val) const {
     uint8_t val_int = val >> 8;
+    if (val_int == 255) return 255;
     uint8_t val_frac = val & 0xFF;
     uint8_t threshold = BAYER64[this->index_ % 64] * 4;
     return val_int + (val_frac > threshold ? 1 : 0);
